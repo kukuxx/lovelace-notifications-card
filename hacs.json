@@ -1,0 +1,7 @@
+{
+    "name": "notifications-card",
+    "render_readme": true,
+    "documentation": "https://github.com/kukuxx/lovelace-notifications-card",
+    "issue_tracker": "https://github.com/kukuxx/lovelace-notifications-card/issues",
+    "homeassistant": "2024.10.0"
+}
