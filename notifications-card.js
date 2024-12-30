@@ -1,3 +1,10 @@
+window.customCards = window.customCards || [];
+window.customCards.push({
+  type: "notifications-card",
+  name: "Notifications Card",
+  description: "A card to display notifications.",
+});
+
 class NotificationCard extends HTMLElement {
   constructor() {
     super();
@@ -26,6 +33,9 @@ class NotificationCard extends HTMLElement {
         return;
       }
 
+      const theme = hass.themes.darkMode ? "dark" : "light"; //監聽深色模式
+      const backgroundColor = theme === "dark" ? "#444" : "#f1f1f1";
+      const textColor = theme === "dark" ? "#fff" : "#333";
       const fontSize = this.config.font_size;
       const lineHeight = parseFloat(fontSize) * (this.config.line_height);
       let notifications = stateObj.attributes.notifications || [];
@@ -42,45 +52,25 @@ class NotificationCard extends HTMLElement {
       this.previousNotifications = [...notifications];
 
       const formattedNotifications = notifications
-        .map(line => `<div class="bubble" style="font-size: ${fontSize}; line-height: ${lineHeight}px;">${line}</div>`)
+        .map(line => `<div class="bubble">${line}</div>`)
         .join("");
 
       this.shadowRoot.innerHTML = `
         <style>
           .bubble {
-            background-color: #f1f1f1;
-            color: #333;
+            background-color: ${backgroundColor};
+            color: ${textColor};
+            font-size: ${fontSize};
+            line-height: ${lineHeight}px;
             border-radius: 15px;
             padding: 10px 15px;
             margin: 20px;
-            width: 85%;
+            width: 60%;
             display: block;
             position: relative;
             word-wrap: break-word;  
             word-break: break-word;  
             white-space: normal;
-          }
-
-          /* 深色模式 */
-          @media (prefers-color-scheme: dark) {
-            .bubble {
-              background-color: #444;  
-              color: #fff;  
-            }
-            .bubble:after {
-              border-top-color: #444 !important;  
-            }
-          }
-
-          /* 淺色模式 */
-          @media (prefers-color-scheme: light) {
-            .bubble {
-              background-color: #f1f1f1;  
-              color: #333;  
-            }
-            .bubble:after {
-              border-top-color: #f1f1f1 !important;  
-            }
           }
 
           .bubble:after {
@@ -91,11 +81,31 @@ class NotificationCard extends HTMLElement {
             width: 0;
             height: 0;
             border: 10px solid transparent;
-            border-top-color: #444;
+            border-top-color: ${backgroundColor};
             border-bottom: 0;
             margin-left: -10px;
             margin-bottom: -10px;
           }
+          
+          .bubble video,
+          .bubble img {
+            max-width: 100% !important;
+            height: auto !important;    
+            border-radius: 15px; 
+          }
+          
+          @media (max-width: 768px) {
+            .bubble {
+              width: auto;
+            }
+          }
+
+          @media (min-width: 1024px) {
+            .bubble {
+              width: 77%;
+            }
+          }
+
         </style>
         <div>${formattedNotifications}</div>
       `;
