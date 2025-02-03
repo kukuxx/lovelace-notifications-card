@@ -3,6 +3,8 @@ class NotificationCard extends HTMLElement {
     super();
     this.attachShadow({ mode: 'open' });
     this.previousNotifications = [];
+    this._handleImageClick = this._handleImageClick.bind(this);
+    this._handleFullscreenClick = this._handleFullscreenClick.bind(this);
   }
 
   setConfig(config) {
@@ -11,19 +13,45 @@ class NotificationCard extends HTMLElement {
     }
 
     this.config = {
-      font_size: this._validateFontSize(config.font_size || '16px'),
-      line_height: this._validateLineHeight(config.line_height || 1),
+      font_size: this._validateFontSize(config.font_size, '16px'),
+      line_height: this._validateLineHeight(config.line_height, 1),
       ...config,
     };
+    // 只有在設定了 media_width 或 media_height 時才設置 CSS 變數
+    if (config.media_width) {
+      this.style.setProperty('--media-width', this._validateMediaSize(config.media_width, '100%'));
+    }
+    if (config.media_height) {
+      this.style.setProperty('--media-height', this._validateMediaSize(config.media_height, 'auto'));
+    }
   }
 
-  _validateFontSize(size) {
-    return typeof size === 'string' && /^\d+(\.\d+)?(px|rem|em)$/.test(size) ? size : '16px';
+  _validateFontSize(size, defaultValue) {
+    return typeof size === 'string' && /^\d+(\.\d+)?(px|rem|em)$/.test(size) ? size : defaultValue;
   }
 
-  _validateLineHeight(height) {
+  _validateLineHeight(height, defaultValue) {
     const num = parseFloat(height);
-    return !isNaN(num) && num > 0 ? num : 1.5;
+    return !isNaN(num) && num > 0 ? num : defaultValue;
+  }
+
+  _validateMediaSize(size, defaultValue) {
+    return typeof size === 'string' && (/^\d+(\.\d+)?(px|%)$/.test(size) || size === 'auto') ? size : defaultValue;
+  }
+
+  _handleImageClick(event) {
+    if (event.target.tagName.toLowerCase() === 'img') {
+      const fullscreenContainer = this.shadowRoot.querySelector('.fullscreen-container');
+      const fullscreenImage = this.shadowRoot.querySelector('.fullscreen-image');
+      fullscreenImage.src = event.target.src;
+      fullscreenContainer.classList.add('active');
+    }
+  }
+
+  _handleFullscreenClick(event) {
+    if (event.target.classList.contains('fullscreen-container')) {
+      event.target.classList.remove('active');
+    }
   }
 
   set hass(hass) {
@@ -42,6 +70,13 @@ class NotificationCard extends HTMLElement {
 
     this.previousNotifications = [...notifications];
     this._render(hass, notifications);
+
+    //事件監聽器
+    const container = this.shadowRoot.querySelector('.notifications-container');
+    container.addEventListener('click', this._handleImageClick);
+
+    const fullscreenContainer = this.shadowRoot.querySelector('.fullscreen-container');
+    fullscreenContainer.addEventListener('click', this._handleFullscreenClick);
   }
 
   _getNotifications(stateObj) {
@@ -56,10 +91,12 @@ class NotificationCard extends HTMLElement {
       n => `<div class="bubble">${this._processContent(n)}</div>`
     ).join('');
 
-
     this.shadowRoot.innerHTML = `
       <style>${styles}</style>
       <div class="notifications-container">${notificationsHTML}</div>
+      <div class="fullscreen-container">
+        <img class="fullscreen-image" src="" alt="Fullscreen Image">
+      </div>
     `;
   }
 
@@ -88,10 +125,36 @@ class NotificationCard extends HTMLElement {
       }
       .bubble video,
       .bubble img {
-          max-width: 100%;
-          height: auto;    
-          border-radius: 15px;
-          display: block;
+        max-width: var(--media-width, 100%);
+        height: var(--media-height, auto);  
+        border-radius: 15px;
+        display: block;
+        cursor: pointer;
+        transition: transform 0.3s ease;
+      }
+      .bubble img:hover {
+        transform: scale(1.05);
+      }
+      .fullscreen-container {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.9);
+        z-index: 1000;
+        justify-content: center;
+        align-items: center;
+        cursor: pointer;
+      }
+      .fullscreen-container.active {
+        display: flex;
+      }
+      .fullscreen-image {
+        max-width: 90%;
+        max-height: 90%;
+        object-fit: contain;
       }
       @keyframes fadeIn {
         from { opacity: 0; transform: translateY(10px); }
@@ -107,6 +170,10 @@ class NotificationCard extends HTMLElement {
         .bubble {
           width: 77%;
         } 
+        .bubble video,
+        .bubble img {
+          max-width: var(--media-width, 35%);
+        }
       }
     `;
   }
@@ -165,7 +232,17 @@ class NotificationCard extends HTMLElement {
     return notifications.every((n, i) => n === this.previousNotifications[i]);
   }
 
-  disconnectedCallback() { }
+  disconnectedCallback() {
+    const container = this.shadowRoot.querySelector('.notifications-container');
+    const fullscreenContainer = this.shadowRoot.querySelector('.fullscreen-container');
+
+    if (container) {
+      container.removeEventListener('click', this._handleImageClick);
+    }
+    if (fullscreenContainer) {
+      fullscreenContainer.removeEventListener('click', this._handleFullscreenClick);
+    }
+  }
 
   getCardSize() {
     return this.previousNotifications.length || 1;
