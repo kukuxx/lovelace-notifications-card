@@ -5,38 +5,102 @@ class NotificationCard extends HTMLElement {
     this.previousNotifications = [];
     this._handleImageClick = this._handleImageClick.bind(this);
     this._handleFullscreenClick = this._handleFullscreenClick.bind(this);
+    this._eventSubscription = null;
+    this._isFirstRender = true;
   }
 
   setConfig(config) {
-    if (!config.entity) {
-      throw new Error("You need to define an entity");
+    if (!config.person_name) {
+      throw new Error("person_name configuration is required");
     }
 
+    // 配置基本參數
     this.config = {
-      font_size: this._validateFontSize(config.font_size, '16px'),
-      line_height: this._validateLineHeight(config.line_height, 1),
-      ...config,
+      font_size: this._validateConfig(config.font_size, '16px', /^\d+(\.\d+)?(px|rem|em)$/),
+      line_height: parseFloat(config.line_height) > 0 ? config.line_height : 1,
+      ...config
     };
-    // 只有在設定了 media_width 或 media_height 時才設置 CSS 變數
+
+    // 設置媒體尺寸
     if (config.media_width) {
-      this.style.setProperty('--media-width', this._validateMediaSize(config.media_width, '100%'));
+      this.style.setProperty('--media-width',
+        this._validateConfig(config.media_width, '100%', /^\d+(\.\d+)?(px|%)$/, 'auto'));
     }
     if (config.media_height) {
-      this.style.setProperty('--media-height', this._validateMediaSize(config.media_height, 'auto'));
+      this.style.setProperty('--media-height',
+        this._validateConfig(config.media_height, 'auto', /^\d+(\.\d+)?(px|%)$/, 'auto'));
     }
   }
 
-  _validateFontSize(size, defaultValue) {
-    return typeof size === 'string' && /^\d+(\.\d+)?(px|rem|em)$/.test(size) ? size : defaultValue;
+  _validateConfig(value, defaultValue, regex, extraValue = null) {
+    if (typeof value !== 'string') return defaultValue;
+    return (regex.test(value) || value === extraValue) ? value : defaultValue;
   }
 
-  _validateLineHeight(height, defaultValue) {
-    const num = parseFloat(height);
-    return !isNaN(num) && num > 0 ? num : defaultValue;
+  set hass(hass) {
+    if (!this.config) return;
+    this._hass = hass;
+
+    const stateObj = hass.states[`person.${this.config.person_name}`];
+    if (!stateObj) {
+      this._renderError(`Person not found: ${this.config.person_name}`);
+      return;
+    }
+
+    this.previousNotifications = JSON.parse(localStorage.getItem(`savedNotifications_${this.config.person_name}`) || "[]")
+
+    if (this._isFirstRender) {
+      this._subscribeToEvents(hass);
+      hass.callService("notifyhelper", "trigger", {
+        targets: [`person.${this.config.person_name}`],
+      });
+      this._isFirstRender = false;
+    }
+
+    // 渲染通知
+    const notifications = this.previousNotifications.length > 0
+      ? this.previousNotifications
+      : ["No notifications available."];
+
+    this._render(hass, notifications);
+
+    // 設置事件監聽
+    const container = this.shadowRoot.querySelector('.notifications-container');
+    const fullscreenContainer = this.shadowRoot.querySelector('.fullscreen-container');
+
+    container.addEventListener('click', this._handleImageClick);
+    fullscreenContainer.addEventListener('click', this._handleFullscreenClick);
   }
 
-  _validateMediaSize(size, defaultValue) {
-    return typeof size === 'string' && (/^\d+(\.\d+)?(px|%)$/.test(size) || size === 'auto') ? size : defaultValue;
+  // 訂閱通知更新事件
+  _subscribeToEvents(hass) {
+    try {
+      this.subscribe = hass.connection.subscribeEvents((event) => {
+        if (event.event_type === "notifyhelper_update" &&
+          event.data.person.includes(this.config.person_name)) {
+
+          // console.log("收到事件:", event);
+          const newNotifications = event.data.notifications || [];
+
+          // 只有當通知變更時才重新渲染
+          if (this._notificationsChanged(newNotifications)) {
+            this._render(hass, newNotifications);
+            this.previousNotifications = [...newNotifications];
+            localStorage.setItem(`savedNotifications_${this.config.person_name}`, JSON.stringify(this.previousNotifications));
+          }
+        }
+      }, "notifyhelper_update");
+
+      this._eventSubscription = typeof unsubscribe === 'function' ? unsubscribe : null;
+    } catch (error) {
+      console.error("Failed to subscribe to events:", error);
+      this._eventSubscription = null;
+    }
+  }
+
+  _notificationsChanged(newNotifications) {
+    if (newNotifications.length !== this.previousNotifications.length) return true;
+    return newNotifications.some((n, i) => n !== this.previousNotifications[i]);
   }
 
   _handleImageClick(event) {
@@ -54,36 +118,6 @@ class NotificationCard extends HTMLElement {
     }
   }
 
-  set hass(hass) {
-    if (!this.config) return;
-
-    const entity = this.config.entity;
-    const stateObj = hass.states[entity];
-
-    if (!stateObj) {
-      this._renderError(`Entity not found: ${entity}`);
-      return;
-    }
-
-    const notifications = this._getNotifications(stateObj);
-    if (this._areNotificationsEqual(notifications)) return;
-
-    this.previousNotifications = [...notifications];
-    this._render(hass, notifications);
-
-    //事件監聽器
-    const container = this.shadowRoot.querySelector('.notifications-container');
-    container.addEventListener('click', this._handleImageClick);
-
-    const fullscreenContainer = this.shadowRoot.querySelector('.fullscreen-container');
-    fullscreenContainer.addEventListener('click', this._handleFullscreenClick);
-  }
-
-  _getNotifications(stateObj) {
-    const notifications = stateObj.attributes.notifications || [];
-    return notifications.length > 0 ? notifications : ["No notifications available."];
-  }
-
   _render(hass, notifications) {
     const theme = hass.themes?.darkMode ? "dark" : "light";
     const styles = this._getStyles(theme);
@@ -91,6 +125,7 @@ class NotificationCard extends HTMLElement {
       n => `<div class="bubble">${this._processContent(n)}</div>`
     ).join('');
 
+    // 渲染到 shadow DOM
     this.shadowRoot.innerHTML = `
       <style>${styles}</style>
       <div class="notifications-container">${notificationsHTML}</div>
@@ -101,13 +136,12 @@ class NotificationCard extends HTMLElement {
   }
 
   _getStyles(theme) {
-    const backgroundColor = theme === "dark" ? "#444" : "#f1f1f1";
-    const textColor = theme === "dark" ? "#fff" : "#333";
+    const isDark = theme === "dark";
+    const backgroundColor = isDark ? "#444" : "#f1f1f1";
+    const textColor = isDark ? "#fff" : "#333";
 
     return `
-      .notifications-container {
-        padding: 10px;
-      }
+      .notifications-container { padding: 10px; }
       .bubble {
         background-color: ${backgroundColor};
         color: ${textColor};
@@ -119,12 +153,10 @@ class NotificationCard extends HTMLElement {
         width: 60%;
         word-wrap: break-word;
         word-break: break-word;
-        transition: all 0.3s ease-in-out;
         opacity: 0;
         animation: fadeIn 0.3s forwards;
       }
-      .bubble video,
-      .bubble img {
+      .bubble video, .bubble img {
         max-width: var(--media-width, 100%);
         height: var(--media-height, auto);  
         border-radius: 15px;
@@ -132,25 +164,19 @@ class NotificationCard extends HTMLElement {
         cursor: pointer;
         transition: transform 0.3s ease;
       }
-      .bubble img:hover {
-        transform: scale(1.05);
-      }
+      .bubble img:hover { transform: scale(1.05); }
       .fullscreen-container {
         display: none;
         position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
+        top: 0; left: 0;
+        width: 100%; height: 100%;
         background-color: rgba(0, 0, 0, 0.9);
         z-index: 1000;
         justify-content: center;
         align-items: center;
         cursor: pointer;
       }
-      .fullscreen-container.active {
-        display: flex;
-      }
+      .fullscreen-container.active { display: flex; }
       .fullscreen-image {
         max-width: 90%;
         max-height: 90%;
@@ -161,32 +187,27 @@ class NotificationCard extends HTMLElement {
         to { opacity: 1; transform: translateY(0); }
       }
       @media (max-width: 768px) {
-        .bubble {
-          width: auto;
-          margin: 10px;
-        }
+        .bubble { width: auto; margin: 10px; }
       }
       @media (min-width: 1024px) {
-        .bubble {
-          width: 77%;
-        } 
-        .bubble video,
-        .bubble img {
-          max-width: var(--media-width, 35%);
-        }
+        .bubble { width: 77%; } 
+        .bubble video, .bubble img { max-width: var(--media-width, 35%); }
       }
     `;
   }
 
   _processContent(content) {
+    // 處理換行符
     const processed = String(content).replace(/(?<![>])\n(?![<])/g, '<br>');
     const temp = document.createElement('div');
     temp.innerHTML = processed;
-    this._sanitizeNode(temp);
+
+    // 驗證訊息
+    this._sanitizeContent(temp);
     return temp.innerHTML;
   }
 
-  _sanitizeNode(node) {
+  _sanitizeContent(node) {
     const ALLOWED_TAGS = new Set([
       'ha-alert', 'blockquote', 'font', 'img', 'video', 'source',
       'strong', 'b', 'i', 'br', 'a', 'div', 'span',
@@ -199,49 +220,52 @@ class NotificationCard extends HTMLElement {
     Array.from(node.children).forEach(child => {
       if (child.nodeType === 1) {
         const tagName = child.tagName.toLowerCase();
+
+        // 移除不允許的標籤
         if (!ALLOWED_TAGS.has(tagName)) {
           node.replaceChild(document.createTextNode(child.textContent), child);
-        } else {
-          Array.from(child.attributes).forEach(attr => {
-            if (!ALLOWED_ATTRS.has(attr.name) || attr.name.startsWith('on')) {
-              child.removeAttribute(attr.name);
-            }
-          });
-          this._sanitizeNode(child);
+          return;
         }
+
+        // 移除不允許的屬性
+        Array.from(child.attributes).forEach(attr => {
+          if (!ALLOWED_ATTRS.has(attr.name) || attr.name.startsWith('on')) {
+            child.removeAttribute(attr.name);
+          }
+        });
+
+        this._sanitizeContent(child);
       }
     });
   }
 
   _renderError(message) {
+    const div = document.createElement('div');
+    div.textContent = message;
+
     this.shadowRoot.innerHTML = `
       <div style="color: red; padding: 16px;">
-        ${this._escapeHTML(message)}
+        ${div.innerHTML}
       </div>
     `;
   }
 
-  _escapeHTML(str) {
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
-  }
-
-  _areNotificationsEqual(notifications) {
-    if (notifications.length !== this.previousNotifications.length) return false;
-    return notifications.every((n, i) => n === this.previousNotifications[i]);
-  }
-
   disconnectedCallback() {
+    // 移除事件監聽
     const container = this.shadowRoot.querySelector('.notifications-container');
     const fullscreenContainer = this.shadowRoot.querySelector('.fullscreen-container');
+    if (container) container.removeEventListener('click', this._handleImageClick);
+    if (fullscreenContainer) fullscreenContainer.removeEventListener('click', this._handleFullscreenClick);
 
-    if (container) {
-      container.removeEventListener('click', this._handleImageClick);
+    // 移除事件訂閱
+    if (this._eventSubscription && typeof this._eventSubscription === 'function') {
+      try {
+        this._eventSubscription();
+      } catch (error) {
+        console.error("Error unsubscribing from events:", error);
+      }
     }
-    if (fullscreenContainer) {
-      fullscreenContainer.removeEventListener('click', this._handleFullscreenClick);
-    }
+    this._eventSubscription = null;
   }
 
   getCardSize() {
