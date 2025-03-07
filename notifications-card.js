@@ -49,20 +49,15 @@ class NotificationCard extends HTMLElement {
 
     this.previousNotifications = JSON.parse(localStorage.getItem(`savedNotifications_${this.config.person_name}`) || "[]")
 
+    // 首次渲染通知
     if (this._isFirstRender) {
+      this._render(hass, this.previousNotifications);
       this._subscribeToEvents(hass);
       hass.callService("notifyhelper", "trigger", {
         targets: [`person.${this.config.person_name}`],
       });
       this._isFirstRender = false;
     }
-
-    // 渲染通知
-    const notifications = this.previousNotifications.length > 0
-      ? this.previousNotifications
-      : ["No notifications available."];
-
-    this._render(hass, notifications);
 
     // 設置事件監聽
     const container = this.shadowRoot.querySelector('.notifications-container');
@@ -119,6 +114,7 @@ class NotificationCard extends HTMLElement {
   }
 
   _render(hass, notifications) {
+    notifications = notifications.length > 0 ? notifications : ["No notifications available."];
     const theme = hass.themes?.darkMode ? "dark" : "light";
     const styles = this._getStyles(theme);
     const notificationsHTML = notifications.map(
@@ -274,6 +270,12 @@ class NotificationCard extends HTMLElement {
 }
 
 customElements.define("notifications-card", NotificationCard);
+
+console.info(
+  `%c  NOTIFICATIONS-CARD  \n%c   Version:  V1.0.5   `,
+  'color: orchid; font-weight: bold; background: dimgray;',
+  'color: orange; font-weight: bold; background: white;'
+);
 
 window.customCards = window.customCards || [];
 window.customCards.push({
